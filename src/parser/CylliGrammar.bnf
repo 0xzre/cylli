@@ -1,0 +1,95 @@
+/*
+    Cylli Grammar - S-Expression (Atomic simple expression)
+
+    syntax-cli -g src/parser/CylliGrammar.bnf -m LALR1 -o src/parser/CylliParser.h
+
+    Atom: [a-zA-Z_][a-zA-Z0-9_]*
+    List: '(' (Atom | List)* ')'
+*/
+
+// Lexical Grammar
+
+%lex
+
+%%
+
+\/\/.*                  %empty
+\/\*[\s\S]*?\*\/        %empty
+
+\s+                     %empty
+
+\"[^\"]*\"              STRING
+
+\d+                     NUMBER
+
+[\w\-+*=!<>/]+          SYMBOL
+
+/lex
+
+// Syntactic Grammar (Backus-Naur Form)
+
+%{
+
+#include <vector>
+#include <string>
+
+/*
+    Expression Type
+*/
+enum class ExprType {
+    NUMBER,
+    STRING,
+    SYMBOL,
+    LIST,
+};
+
+/*
+    Expression
+*/
+struct Expr {
+    ExprType type;
+
+    int number;
+    std::string string;
+    std::vector<Expr> list;
+
+    Expr(int number) : type(ExprType::NUMBER), number(number) {}
+
+    Expr(std::string& strVal) {
+        if (strVal[0] == '"') {
+            type = ExprType::STRING;
+            string = strVal.substr(1, strVal.size() - 2);
+        } else {
+            type = ExprType::SYMBOL;
+            string = strVal;
+        }
+    }
+
+    Expr(std::vector<Expr> listVal) : type(ExprType::LIST), list(listVal) {}
+};
+
+using Value = Expr;
+
+%}
+
+%%
+
+Expr
+    : Atom
+    | List
+    ;
+
+Atom
+    : NUMBER { $$ = Expr(std::stoi($1)) }
+    | STRING { $$ = Expr($1) }
+    | SYMBOL { $$ = Expr($1) }
+    ;
+
+List
+    : '(' ListItems ')' { $$ = $2 }
+    ;
+
+ListItems
+    : %empty { $$ = Expr(std::vector<Expr>{}) }
+    | ListItems Expr { $1.list.push_back($2); $$ = $1 }
+    ;

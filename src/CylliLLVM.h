@@ -7,29 +7,35 @@
 
 #include <string>
 #include <iostream>
+#include <regex>
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 
+#include "./parser/CylliParser.h"
+
+using syntax::CylliParser;
+
 class CylliLLVM
 {
 public:
-    CylliLLVM()
+    CylliLLVM() : parser(std::make_unique<CylliParser>())
     {
         moduleInit();
+        setupExernalFunctions();
     }
 
     void exec(const std::string &cylliCode)
     {
         // 1. Parse the cylli program
-        // auto ast = CylliParser::parse(cylliCode);
+        auto ast = parser->parse(cylliCode);
 
         // 2. Generate LLVM IR
         // auto ir = CylliLLVMGenerator::generate(ast);
 
-        compile();
+        compile(ast);
 
         // Debug print module
         module->print(llvm::outs(), nullptr);
@@ -44,26 +50,81 @@ private:
     /*
         Compile ast(TODO) to LLVM IR
     */
-    void compile()
+    void compile(const Expr &ast)
     {
         // 1. Create entry main func
         fn = createFunction("main", llvm::FunctionType::get(builder->getInt32Ty(), false));
 
         // 2. Compile main
-        auto result = generate(/* ast(TODO) */);
+        generate(ast);
 
-        // 3. Cast ret val to i32 from main
-        auto i32result = builder->CreateIntCast(result, builder->getInt32Ty(), true);
+        // // 3. Cast ret val to i32 from main
+        // auto i32result = builder->CreateIntCast(result, builder->getInt32Ty(), true);
 
-        builder->CreateRet(i32result);
+        builder->CreateRet(builder->getInt32(0));
     }
 
     /*
          Main compile loop, basically interpreter at compile time
     */
-    llvm::Value *generate(/* exp */)
+    llvm::Value *generate(const Expr &expr)
     {
-        return builder->CreateGlobalStringPtr("Henyo, World!\n");
+        switch (expr.type)
+        {
+        case ExprType::NUMBER:
+            return builder->getInt32(expr.number);
+
+        case ExprType::STRING:
+        {
+            // TODO: Implement all kink of escape sequences at parse level or here
+            auto re = std::regex("\\\\n");
+            auto str = std::regex_replace(expr.string, re, "\n");
+
+            return builder->CreateGlobalStringPtr(str);
+        }
+
+        case ExprType::SYMBOL:
+            // TODO: Implement symbol
+            return builder->getInt32(0);
+
+        case ExprType::LIST:
+            auto tag = expr.list[0];
+
+            // Special cases
+            if (tag.type == ExprType::SYMBOL)
+            {
+                auto op = tag.string;
+
+                if (op == "printf")
+                {
+                    auto printFn = module->getFunction("printf");
+
+                    std::vector<llvm::Value *> args{};
+
+                    for (auto i = 1; i < expr.list.size(); i++)
+                    {
+                        args.push_back(generate(expr.list[i]));
+                    }
+
+                    return builder->CreateCall(printFn, args);
+                }
+            }
+        }
+
+        // Default return for unreachable code
+        return builder->getInt32(0);
+    }
+
+    /*
+        Define external funcs (from libc++ example)
+    */
+    void setupExernalFunctions()
+    {
+        auto bytePtrTy = builder->getInt8Ty()->getPointerTo();
+        module->getOrInsertFunction("printf", llvm::FunctionType::get(
+                                                  /* Ret type */ builder->getInt32Ty(),
+                                                  /* Args */ bytePtrTy,
+                                                  /* Does accept Var args */ true));
     }
 
     /*
@@ -82,7 +143,7 @@ private:
     }
 
     /*
-        Create a new function prototype in the module (definition, not declaration)
+        Create a new function prototype in the module (declare, not definition)
     */
     llvm::Function *createFunctionPrototype(const std::string &fnName, llvm::FunctionType *fnType)
     {
@@ -129,6 +190,10 @@ private:
         // Create a new IRBuilder based on the ctx
         builder = std::make_unique<llvm::IRBuilder<>>(*ctx);
     }
+    /*
+        Cylli Parser
+    */
+    std::unique_ptr<CylliParser> parser;
     /*
         Current compiling function
     */
